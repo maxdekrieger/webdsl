@@ -1,0 +1,59 @@
+module org/webdsl/dsl/write-files/max-ir-files
+
+imports
+  libstratego-aterm
+  libwebdsl-front
+
+rules
+
+  write-ir-file: (term, filename) -> term
+    where
+      try(<remove-file> filename)
+      ; file := <fopen> (filename, "w")
+      ; stripped-term := <topdown(try(strip-term))> term
+      ; sorted-term := <topdown(try(sort-entity-defs))> stripped-term
+      ; text := <pp-aterm> sorted-term
+      ; <fputs> (text, file)
+      ; <fclose> file
+
+  strip-term:
+    Application(name, sections) -> Application(name, stripped-sections)
+    with
+  	  stripped-sections := <filter(filter-irrelevant-debugging-terms)> sections
+  		  
+  strip-term:
+    EntityNoSuper(name, defs) -> EntityNoSuper(name, stripped-defs)
+    with
+      stripped-defs := <filter(not(?StaticEntityFunction(_, _, _, _)))> defs
+        
+  strip-term:
+    Entity(name, s, defs) -> Entity(name, s, stripped-defs)
+    with
+      stripped-defs := <filter(not(?StaticEntityFunction(_, _, _, _)))> defs
+
+  filter-irrelevant-debugging-terms = 
+    not(?Section("emitted_section", _))
+    ; not(?Module(".servletapp/src-webdsl-template/built-in", _))
+      
+  sort-entity-defs:
+    Entity(n, s, defs) -> Entity(n, s, sorted-defs)
+      where
+        sorted-defs := <qsort(prop-func-gt)> defs
+        
+  sort-entity-defs:
+    EntityNoSuper(n, defs) -> EntityNoSuper(n, sorted-defs)
+      where
+        sorted-defs := <qsort(prop-func-gt)> defs
+        
+  sort-entity-defs:
+    SessionEntity(n, defs) -> SessionEntity(n, sorted-defs)
+      where
+        sorted-defs := <qsort(prop-func-gt)> defs
+    
+  prop-func-gt: (pf1, pf2) -> result
+    where
+        (<?Property(s1, _, _, _)> pf1 <+ <?Function(s1, _, _, _)> pf1)
+      ; (<?Property(s2, _, _, _)> pf2 <+ <?Function(s2, _, _, _)> pf2)
+      ; result := <string-lt> (s1, s2)
+        
+       

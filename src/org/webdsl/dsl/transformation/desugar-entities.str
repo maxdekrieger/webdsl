@@ -1,0 +1,458 @@
+module org/webdsl/dsl/transformation/desugar-entities
+
+imports
+  libwebdsl-front
+  org/webdsl/dsl/write-files/max-ir-files
+
+imports
+  org/webdsl/dsl/modules/types/entity             // for CreatedProperty() and ModifiedProperty()
+  org/webdsl/dsl/languages/action/not-null-checks // for <add-not-null-checks>
+  org/webdsl/dsl/typechecker/utils                // for <type-compatible>
+
+rules
+  
+  desugar-entities : before -> after
+    where
+      desugared-ee := <desugar-extend-entities> before
+      ; <write-ir-file> (desugared-ee, "/Users/maxdekrieger/eclipse-workspace/webdslcompilertest/ir/2.1-desuged-extend-entities.aterm")
+      ; desugared-props := <desugar-entity-properties> desugared-ee
+      ; <write-ir-file> (desugared-props, "/Users/maxdekrieger/eclipse-workspace/webdslcompilertest/ir/2.2-desuged-entity-properties.aterm")
+      ; desugared-entity-validations := <desugar-entities-validations> desugared-props
+      ; <write-ir-file> (desugared-entity-validations, "/Users/maxdekrieger/eclipse-workspace/webdslcompilertest/ir/2.3-desugared-entity-validations.aterm")
+      ; added-generated-functions := <extend-entities-with-generated-functions> desugared-entity-validations
+      ; <write-ir-file> (added-generated-functions, "/Users/maxdekrieger/eclipse-workspace/webdslcompilertest/ir/2.4-added-generated-functions.aterm")
+      ; after := added-generated-functions
+        
+rules // Desugar extend all entities to Entity(..), EntityNoSuper(..) or SessionEntity(..) 
+  
+  desugar-extend-entities: before -> after
+    where
+      {| ExtendEntity:
+	        generated-dynamic-rules-ee := <topdown(try(transform-extend-entities-to-dynamic-rules))> before
+	      ; after := <extend-entities> generated-dynamic-rules-ee
+      |}
+    
+  transform-extend-entities-to-dynamic-rules:
+    e@ExtendEntity(ident, entbodydecs1) -> RemoveMe()
+    with rules (
+        ExtendEntity :+
+          EntityNoSuper(ident, entbodydecs2){anno*} -> EntityNoSuper(ident, <concat> [entbodydecs1,entbodydecs2]){anno*}
+          with rules ( ExtendEntity :- Entity(ident, _, entbodydecs2)
+                       ExtendEntity :- SessionEntity(ident, entbodydecs2) )
+        ExtendEntity :+
+          Entity(ident, s, entbodydecs2){anno*} -> Entity(ident, s, <concat> [entbodydecs1,entbodydecs2]){anno*}
+          with rules ( ExtendEntity :- EntityNoSuper(ident, entbodydecs2)
+                       ExtendEntity :- SessionEntity(ident, entbodydecs2) )
+
+        ExtendEntity :+
+          SessionEntity(ident, entbodydecs2){anno*} -> SessionEntity(ident, <concat> [entbodydecs1,entbodydecs2]){anno*}
+          with rules ( ExtendEntity :- Entity(ident, s, entbodydecs2)
+                       ExtendEntity :- EntityNoSuper(ident, entbodydecs2) )
+      )
+  
+  extend-entities = 
+    topdown(try(filter(not(?RemoveMe()))))
+    ; topdown(try(ExtendEntity))  
+      
+rules // Desguar entity properties
+	
+  desugar-entity-properties: before -> after
+    where
+      normalized-property-constructors := <topdown(try(normalize-prop-constructors))> before
+      ; added-length-annotations := <topdown(try(add-length-annotations))> normalized-property-constructors
+      ; after := added-length-annotations
+	
+	normalize-prop-constructors: PropertyNoAnno( name, propkind, type ){anno*} -> Property( name, propkind, type, []){anno*}
+	normalize-prop-constructors: DerivedPropertyNoAnno( name, propkind, type, ex ){anno*}  -> DerivedProperty( name, propkind, type, [], ex ){anno*}
+	
+	add-length-annotations:
+	  Property(x, k, s, annos){anno*} -> Property(x, k, s, annos2){anno*}
+    where not(<fetch(?LengthAnno(_))> annos)
+        ; annos2 := [LengthAnno(<default-type-length> s)|annos]
+          
+  default-type-length : SimpleSort("String") -> "255"
+  default-type-length : SimpleSort("URL") -> "255"
+  default-type-length : SimpleSort("Secret") -> "255"
+  default-type-length : SimpleSort("Email") -> "255"
+  default-type-length : SimpleSort("Patch") -> "1000000"
+  default-type-length : SimpleSort("WikiText") -> "1000000"
+  default-type-length : SimpleSort("Text") -> "1000000"
+  
+rules // Desugar entity validation statements
+  
+  desugar-entities-validations: before -> <topdown(try(desugar-entity-validations))> before
+  
+  desugar-entity-validations: Entity(name, s, entbodydecs){anno*} -> Entity(name, s, <move-entity-validations-to-props> entbodydecs){anno*}
+  desugar-entity-validations: EntityNoSuper(name,entbodydecs){anno*} -> EntityNoSuper(name,<move-entity-validations-to-props> entbodydecs){anno*}
+  desugar-entity-validations: SessionEntity(name,entbodydecs){anno*} -> SessionEntity(name,<move-entity-validations-to-props> entbodydecs){anno*}
+  
+  move-entity-validations-to-props: 
+    entbodydecs -> entbodydecs2
+    where
+        validations := <filter(?ValidateEntity(_,_))> entbodydecs
+      ; props := <filter(?Property(_,_,_,_))> entbodydecs 
+      ; newprops := <try(move-entity-validations-to-props(|validations))> props
+      ; entbodydecs2 := <concat> [newprops, <filter(not(?Property(_,_,_,_)); not(?ValidateEntity(_,_)))> entbodydecs]
+     
+  move-entity-validations-to-props(|validationrules):
+    props -> props3
+    where 
+        <?[ValidateEntity(echeck,emessage)|rest]> validationrules
+      ; varnames := <collect(?Var(<strip-annos>) <+ ?FieldAccess(Var("this"),<strip-annos>))> echeck
+      ; props2 := <map(try(move-entity-validations-to-props-helper(|varnames, echeck, emessage)))> props
+      ; props3 := <try(move-entity-validations-to-props(|rest))> props2
+      <+
+        props3 := props
+          
+  move-entity-validations-to-props-helper(|varnames,echeck,emessage):
+    a@Property(name,kind,type,anno){anno*} -> //properties are normalized due to innermost
+    Property(name,kind,type,[ValidateAnno(echeck,emessage)|anno]){anno*}
+    where <fetch(?name)> varnames
+  
+rules // Extend entities with generated functions
+	
+  extend-entities-with-generated-functions: before -> after
+    where
+    	added-prop-setter-functions := <topdown(try(generate-prop-setters))> before 
+    	; added-all-funcs := <topdown(try(generate-all-funcs-for-entity))> added-prop-setter-functions
+    	; added-allowed-funcs := <topdown(try(generate-allowed-funcs-for-entity))> added-all-funcs
+      ; added-entity-event-funcs := <topdown(try(generate-entity-event-functions))> added-allowed-funcs
+      ; added-validation-funcs := <topdown(try(generate-validation-funcs-for-entity))> added-entity-event-funcs
+      ; added-save-validation-funcs := <topdown(try(generate-validate-save-funcs-for-entity))> added-validation-funcs
+      ; added-string-find-funcs := <topdown(try(generate-string-find-funcs-for-entity))> added-save-validation-funcs 
+      ; added-entity-load-funcs := <topdown(try(generate-entity-load-func))> added-string-find-funcs 
+      ; after := added-entity-load-funcs
+      
+  // Generate setter functions for entity properties   
+  generate-prop-setters:
+    EntityNoSuper(ident, entbodydecs){anno*} -> EntityNoSuper(ident, entbodydecs2){anno*}
+      where
+          props := [ CreatedProperty(), ModifiedProperty() | <filter(?Property(_, _, _, _))> entbodydecs]
+        ; setter-function-lists := <map(generate-setter-func-for-prop(|ident))> props
+        ; setter-functions := <foldl(conc)> (setter-function-lists, [])
+        ; entbodydecs2 := <concat> [setter-functions, entbodydecs]
+  
+  generate-prop-setters:
+    SessionEntity(ident, entbodydecs){anno*} -> SessionEntity(ident, entbodydecs2){anno*}
+      where
+          props := [ CreatedProperty(), ModifiedProperty() | <filter(?Property(_, _, _, _))> entbodydecs]
+        ; setter-function-lists := <map(generate-setter-func-for-prop(|ident))> props
+        ; setter-functions := <foldl(conc)> (setter-function-lists, [])
+        ; entbodydecs2 := <concat> [setter-functions, entbodydecs]	 
+          
+  generate-prop-setters:
+    Entity(ident, s, entbodydecs){anno*} -> Entity(ident, s, entbodydecs2){anno*}
+      where
+          props := <filter(?Property(_, _, _, _))> entbodydecs
+        ; setter-function-lists := <map(generate-setter-func-for-prop(|ident))> props
+        ; setter-functions := <foldl(conc)> (setter-function-lists, [])
+        ; entbodydecs2 := <concat> [setter-functions, entbodydecs]
+
+  generate-setter-func-for-prop(|x_class): 
+    prop@Property(x, k, srt@SimpleSort(ss), annos) -> result
+    where
+        x_nameset := <concat-strings> ["set", <capitalize-string> x]
+      ; generated-fun := Function(
+            x_nameset
+            , [Arg("value", srt)]
+            , SimpleSort("Void")
+            , Block([])
+          )
+      ; result := [ generated-fun ] 
+         
+  generate-setter-func-for-prop(|x_class):  
+    prop@Property(x, k, srt@GenericSort(_,[srt2@SimpleSort(_)]), annos) -> result
+    where  
+        x_nameadd := <concat-strings> ["addTo", <capitalize-string> x]
+      ; x_nameremove := <concat-strings> ["removeFrom", <capitalize-string> x]
+      ; x_replaceall := <concat-strings> ["replaceAll", <capitalize-string> x]
+      ; fun-add-to := Function(
+            x_nameadd
+            , [Arg("value", srt2)]
+            , SimpleSort("Void")
+            , Block([])
+          )
+      ; fun-remove-from := Function(
+            x_nameremove
+            , [Arg("value", srt2)]
+            , SimpleSort("Void")
+            , Block([])
+          )
+      ; fun-replace-all := Function(
+            x_replaceall
+            , [Arg("value", srt)]
+            , SimpleSort(x_class)
+            , Block(
+                [ Stat(Assignment(FieldAccess(Var("this"), x), Var("value")))
+                , Return(Var("this"))
+                ]
+              )
+          ) 
+      ; result := [ fun-add-to, fun-remove-from, fun-replace-all ]
+   
+  // Generate functions that retrieve a list of all entity instances
+  generate-all-funcs-for-entity: Entity(ident, s, defs){anno*} -> Entity(ident, s, <conc> (defs, <generate-all-funcs> ident)){anno*}
+  generate-all-funcs-for-entity: EntityNoSuper(ident, defs){anno*} -> EntityNoSuper(ident, <conc> (defs, <generate-all-funcs> ident)){anno*}
+  generate-all-funcs-for-entity: SessionEntity(ident, defs){anno*} -> SessionEntity(ident, <conc> (defs, <generate-all-funcs> ident)){anno*}
+  
+  generate-all-funcs: ent_name -> [fun1, fun2]
+    with
+        return := GenericSort("List",[SimpleSort(ent_name)])
+      ; block := Block([Return(HqlQuery(QueryRule(SelectFrom(None(),FromClause([FromRangeJoin(FromClass(Path([ent_name]),None(),None()),None())])),None(),None(),None())))])
+      ; fun1 := Function("all",[],return,block)
+      ; fun2 := StaticEntityFunction("all",[],ReturnType(return),block)
+        
+        
+  // Generate functions that determine
+  generate-allowed-funcs-for-entity: Entity(ident, s, defs){anno*} -> Entity(ident, s, <conc> (defs, <generate-allowed-funcs> defs)){anno*}
+  generate-allowed-funcs-for-entity: EntityNoSuper(ident, defs){anno*} -> EntityNoSuper(ident, <conc> (defs, <generate-allowed-funcs> defs)){anno*}
+  generate-allowed-funcs-for-entity: SessionEntity(ident, defs){anno*} -> SessionEntity(ident, <conc> (defs, <generate-allowed-funcs> defs)){anno*}
+  
+  generate-allowed-funcs: defs -> result
+    with
+        allowed-funcs-lists := <map(generate-allowed-func)> defs
+      ; result := <flatten-list> allowed-funcs-lists
+        
+  generate-allowed-func: definition -> result
+    where
+        <?Property(x, k, srt, annos)> definition
+      ; <?Ref() <+ ?Comp()> k
+      ; srt1@SimpleSort(sortname) := <try-strip-generic-sort> srt
+      ; (<fetch(?AllowedAnno(e1))> annos <+ e1 := Call(Var(sortname),"all",[]))
+      ; result := Function(
+            <concat-strings> ["allowed", <capitalize-string> x]
+          , []
+          , GenericSort("List", [srt1])
+          , Block([Return(e1)])
+        )
+      <+
+        result := []
+
+  // Generate this and entity functions
+  generate-entity-event-functions: Entity(ident, s, defs){anno*} -> Entity(ident, s, <conc> (defs, <generate-constructor-and-this> ident)){anno*}
+  generate-entity-event-functions: EntityNoSuper(ident, defs){anno*} -> EntityNoSuper(ident, <conc> (defs, <generate-constructor-and-this> ident)){anno*}
+  generate-entity-event-functions: SessionEntity(ident, defs){anno*} -> SessionEntity(ident, <conc> (defs, <generate-constructor-and-this> ident)){anno*}
+  
+  generate-constructor-and-this: entity_name -> [fun1, fun2]
+    with
+	    	fun1 := Function(
+	          <capitalize-string> entity_name
+	        , []
+	        , SimpleSort("Void")
+	        , Block([])
+	        )
+      ; fun2 := Function(
+            <conc-strings> (<capitalize-string> entity_name, "$this")
+          , []
+          , SimpleSort(<capitalize-string> entity_name)
+          , Block(
+              [Stat(Call(Var("this"), <capitalize-string> entity_name, [])), Return(Var("this"))]
+            )
+          )
+          
+  // Generate validate functions for properties
+  generate-validation-funcs-for-entity: Entity(ident, s, defs){anno*} -> Entity(ident, s, <conc> (defs, <generate-validation-funcs> defs)){anno*}
+  generate-validation-funcs-for-entity: EntityNoSuper(ident, defs){anno*} -> EntityNoSuper(ident, <conc> (defs, <generate-validation-funcs> defs)){anno*}
+  generate-validation-funcs-for-entity: SessionEntity(ident, defs){anno*} -> SessionEntity(ident, <conc> (defs, <generate-validation-funcs> defs)){anno*}
+  
+  generate-validation-funcs: defs -> result
+    with
+        allowed-funcs-lists := <map(generate-validation-func)> defs
+      ; result := <flatten-list> allowed-funcs-lists
+        
+  generate-validation-func: prop -> result
+    where
+        <?Property(x, k, srt, annos){anno*}> prop
+      ; funname1 := <concat-strings> ["validate", <capitalize-string> x]
+      ; funname2 := <concat-strings> ["validate", <capitalize-string> x, "_internal"] 
+      ; fun1 := Function(
+            funname1
+          , []
+          , SimpleSort("ValidationExceptionMultiple")
+          , Block([ VarDeclInit("v", SimpleSort("ValidationExceptionMultiple"), ThisCall("createEmptyValidationExceptionMultiple", []))
+                , Stat(Call(Var("this"), funname2, [Var("v")]))
+                , Return(Var("v"))
+                ]
+            )
+        ) 
+      ; validation_block := Block( <prop-annos-to-validation-statements(|x)> annos )
+      ; fun2 := Function(
+            funname2
+          , [Arg("v", SimpleSort("ValidationExceptionMultiple"))]
+          , SimpleSort("Void")
+          , validation_block
+        )
+      ; result := [fun1, fun2]
+      <+ 
+        result := []
+        
+  anno-to-validate = 
+      ?ValidateAnno(_, _) <+ ?LengthAnno(_) <+ ?NotEmptyAnno()
+      
+  prop-annos-to-validation-statements(|prop_name): defs -> statements
+    where
+        statements-list := <map(anno-to-validate; prop-anno-to-validation-statement(|prop_name) <+ ![])> defs
+      ; statements := <flatten-list> statements-list
+      
+  prop-anno-to-validation-statement(|prop_name): ValidateAnno(e_check,e_message){anno*} -> If(
+                    Not(<add-not-null-checks> e_check)
+                  , Block(
+                      [ Stat(
+                          Call(
+                            FieldAccess(Var("v"), "exceptions")
+                          , "add"
+                          , [ Cast(
+                                Call(
+                                  Cast(
+                                    Call(ThisCall("createEmptyValidationException", []), "ValidationException$this", [])
+                                  , SimpleSort("ValidationException")
+                                  )
+                                , "$set$message"
+                                , [String(e_message)]
+                                )
+                              , SimpleSort("ValidationException")
+                              )
+                            ]
+                          )
+                        )
+                      ]
+                    )
+                  , Block([])
+                  )
+  prop-anno-to-validation-statement(|prop_name): LengthAnno(i_length) -> If(
+                    And(
+                      NotEq(FieldAccess(Var("this"), prop_name), Null())
+                    , LargerThan(
+                        Call(FieldAccess(Var("this"), prop_name), "length", [])
+                      , Int(i_length)
+                      )
+                    )
+                  , Block(
+                      [ Stat(
+                          Call(
+                            FieldAccess(Var("v"), "exceptions")
+                          , "add"
+                          , [ Cast(
+                                Call(
+                                  Cast(
+                                    Call(ThisCall("createEmptyValidationException", []), "ValidationException$this", [])
+                                  , SimpleSort("ValidationException")
+                                  )
+                                , "$set$message"
+                                , [Add(Add(String("Value exceeds maximum length ("), Int(i_length)), String(")"))]
+                                )
+                              , SimpleSort("ValidationException")
+                              )
+                            ]
+                          )
+                        )
+                      ]
+                    )
+                  , Block([])
+                  )
+                  
+  prop-anno-to-validation-statement(|prop_name): NotEmptyAnno() -> If(
+                    Or(
+                      Eq(FieldAccess(Var("this"), prop_name), Null())
+                    , Eq(Call(FieldAccess(Var("this"), prop_name), "length", []), Int("0"))
+                    )
+                  , Block(
+                      [ Stat(Call(FieldAccess(Var("v"), "exceptions")
+                          , "add"
+                          , [ Cast(Call(Cast(Call(ThisCall("createEmptyValidationException", []), "ValidationException$this", []), SimpleSort("ValidationException")), "$set$message", [String("Value is required")]), SimpleSort("ValidationException"))])
+                        )
+                      ]
+                    )
+                  , Block([])
+                  )
+                  
+  generate-validate-save-funcs-for-entity: Entity(x_class, s, entbodydecs){anno*} -> Entity(x_class, s, [<generate-validate-save-func> entbodydecs| entbodydecs]){anno*}
+  generate-validate-save-funcs-for-entity: EntityNoSuper(x_class, entbodydecs){anno*} -> EntityNoSuper(x_class, [<generate-validate-save-func> entbodydecs| entbodydecs]){anno*}
+  generate-validate-save-funcs-for-entity: SessionEntity(x_class, entbodydecs){anno*} -> SessionEntity(x_class, [<generate-validate-save-func> entbodydecs| entbodydecs]){anno*}
+      
+  generate-validate-save-func: entbodydecs -> result
+    with
+    	  validate-calls := <map(prop-to-internal-validate-call)> <filter(?Property(_,_,_,_))> entbodydecs
+      ; result := Function(
+		              "validateSave"
+		            , []
+		            , SimpleSort("ValidationExceptionMultiple")
+		            , Block(
+		                <flatten-list> [ 
+		                	VarDeclInit("v", SimpleSort("ValidationExceptionMultiple"), ThisCall("createEmptyValidationExceptionMultiple", []))
+		                , validate-calls
+		                , Return(Var("v"))
+		                ]
+		              )
+		            )
+		  
+  prop-to-internal-validate-call: Property(x, _, _, _) -> Stat(Call(Var("this"), <concat-strings> ["validate", <capitalize-string> x, "_internal"], [Var("v")]))
+  
+  generate-string-find-funcs-for-entity: Entity(ident, s, defs){anno*} -> Entity(ident, s, <conc> (defs, <generate-string-find-funcs(|ident)> defs)){anno*}
+  generate-string-find-funcs-for-entity: EntityNoSuper(ident, defs){anno*} -> EntityNoSuper(ident, <conc> (defs, <generate-string-find-funcs(|ident)> defs)){anno*}
+  generate-string-find-funcs-for-entity: SessionEntity(ident, defs){anno*} -> SessionEntity(ident, <conc> (defs, <generate-string-find-funcs(|ident)> defs)){anno*}
+  
+  generate-string-find-funcs(|x_class): defs -> result
+    with
+        new-functions := <map(generate-string-find-func(|x_class))> defs
+      ; result := <flatten-list> new-functions
+        
+  generate-string-find-func(|x_class): prop -> result
+    where
+      (<?Property(x, k, srt, annos)> prop <+ <?PropertyNoAnno(x, k, srt)> prop)
+    ; <type-compatible> (srt, SimpleSort("String"))
+    ; fun1name := <concat-strings> ["_static_findBy", <capitalize-string> x]
+    ; fun2name := <concat-strings> ["_static_findBy", <capitalize-string> x, "Like"]
+    ; fun1 := Function(
+              fun1name
+            , [Arg("prop", SimpleSort("String"))]
+            , GenericSort("List", [SimpleSort(x_class)])
+            , Block([ Return(HqlQuery(QueryRule(SelectFrom(
+                            Some(Select(None(), SelectedPropertiesList([AliasedExpression(Path(["g"]), None())])))
+                          , FromClause([ FromRangeJoin(FromClass(Path([x_class]), Some(AsAlias(Alias("g"))), None()), [])])
+                        ), Some(WhereClause(EQ(Path(["g", <conc-strings> ("_", x)]), DslExp(Var("prop"))))), None(), None())))]))
+    ; fun2 := Function(
+              fun2name
+            , [Arg("prop", SimpleSort("String"))]
+            , GenericSort("List", [SimpleSort(x_class)])
+            , Block(
+                [ VarDeclInit("s", SimpleSort("String"){[]}, Add(Add(String("%"), Var("prop")), String("%")))
+                , Return(HqlQuery(QueryRule(SelectFrom(Some(Select(None(), SelectedPropertiesList([AliasedExpression(Path(["g"]), None())])))
+                        , FromClause([ FromRangeJoin(FromClass(Path([x_class]), Some(AsAlias(Alias("g"))), None()), [])])
+                        ), Some(WhereClause(LIKE(Path(["g", <conc-strings> ("_", x)]), DslExp(Var("s"))))), None(), None())))]))
+    ; result := [fun1, fun2]
+    <+
+      result := []
+      
+  generate-entity-load-func : Entity(ident, s, defs){anno*} -> Entity(ident, s, [<generate-load-func(|ident)> defs | defs]){anno*}
+  generate-entity-load-func : EntityNoSuper(ident, defs){anno*} -> EntityNoSuper(ident, [<generate-load-func(|ident)> defs | defs]){anno*}
+  generate-entity-load-func : SessionEntity(ident, defs){anno*} -> SessionEntity(ident, [<generate-load-func(|ident)> defs | defs]){anno*}
+  
+  generate-load-func(|x_class): defs -> result
+    where
+        idsort-list := <filter(?Property(_, _, sort, annos); !annos; fetch(?SimpleAnno("id")); !sort)> defs
+      ; <?1> <length> idsort-list
+      ; <?[idsort | _]> idsort-list
+        // Entity has a property annotated as id
+      ; result := Function(
+              "_static_load"
+            , [Arg("prop", idsort)]
+            , SimpleSort(x_class)
+            , Block([Return(ThisCall(<conc-strings> ("find", <capitalize-string> x_class), [Var("prop")]))])
+            )
+      <+ 
+        // Entity does not have property annotated as id
+        result := Function(
+              "_static_load"
+            , [Arg("prop", SimpleSort("UUID"))]
+            , SimpleSort(x_class)
+            , Block(
+                [ Return(
+                    Cast(
+                      ThisCall("loadEntity", [String(x_class), Var("prop")])
+                    , SimpleSort(x_class)
+                    )
+                  )
+                ]
+              )
+            )
