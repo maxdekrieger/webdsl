@@ -10,6 +10,8 @@ imports
 
 strategies
   
+  desugar-top-without-repeat = innermost(with-toplevel-name(desugar))
+  
   desugar-top = repeat(innermost-rep(desugar)) //why bother passing desugar, remove for readability?
 
   innermost-rep(s) =
