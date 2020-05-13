@@ -39,10 +39,10 @@ strategies
    dsl-to-core-generation: before -> result
     where
 	      removed-pos-annos := <remove-position-annos> before
-	    //; myAfter := <stage(desugar-entities|"desugar entities")> removed-pos-annos
 	    ; after := <stage(desugar-top-without-repeat|"model-to-model")> removed-pos-annos
-	    //; after := <stage(desugar-top|"model-to-model")> removed-pos-annos
 	    ; result := <if-extra-typechecking(stage(typecheck|"extra typechecking")) ; stage(access-control-stage | "access control") ; check-for-ajax ; stage(analyze-all|"performing analysis")> after
+      //; myAfter := <stage(desugar-entities|"desugar entities")> removed-pos-annos
+      //; after := <stage(desugar-top|"model-to-model")> removed-pos-annos
 	    //; <write-ir-file> (removed-pos-annos, "/Users/maxdekrieger/eclipse-workspace/webdslcompilertest/ir/1-before.aterm")
       //; <write-ir-file> (myAfter, "/Users/maxdekrieger/eclipse-workspace/webdslcompilertest/ir/2-new.aterm")
       //; <write-ir-file> (after, "/Users/maxdekrieger/eclipse-workspace/webdslcompilertest/ir/3-correct.aterm")

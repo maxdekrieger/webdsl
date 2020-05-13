@@ -48,7 +48,7 @@ rules // type compatibility
     ?(SimpleSort(subtypetobechecked), SimpleSort(supertype))
     ; where( <extends>(subtypetobechecked, supertype) )
 
-  extends-check = Extends
+  s = Extends
   extends-check = extends-builtin
   extends-check = extends-genericsorts
   

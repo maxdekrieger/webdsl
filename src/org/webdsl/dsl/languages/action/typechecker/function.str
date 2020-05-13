@@ -28,6 +28,8 @@ rules
     where returns := <collect(?Return(_))> body1
         ; wrongreturns := <filter(\ Return(e) -> Return(e) where not(<type-compatible> (sort,<type-of> e)) \)> returns
         ; not([] := wrongreturns)
+        ; [Return(e) | tail] := wrongreturns 
+        ; <debug> <concat-strings> ["not(<type-compatible> (", <write-to-string> sort, ", ", <write-to-string> <type-of> e, "))"]
   
   // checks for at least one return inside a normal function
   constraint-error-action :

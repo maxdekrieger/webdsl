@@ -10,7 +10,42 @@ imports
 
 strategies
   
-  desugar-top-without-repeat = innermost(with-toplevel-name(desugar))
+  desugar-top-without-repeat = 
+	      ?Section(name, defs){anno*}
+	    ; defs2 := <desugar-top-without-repeat> defs
+	    ; !Section(name, defs2){anno*}
+    <+ 
+        ?AccessControlDefinition(name, defs){anno*}
+      ; defs2 := <desugar-top-without-repeat> defs
+      ; !AccessControlDefinition(name, defs2){anno*}
+    <+
+        map(desugar-toplevel-dr-scoped)
+        
+        
+  desugar-toplevel-dr-scoped = 
+    //{| // rules added/altered/deleted during desugaring phase 
+       // AddWebDSLSection,
+       // AddWebDSLDefs, CreateInverseSlaveAnno, EntityEventFunctionsGenerated, ExtendEntityFunction, ExtendEntity, FunctionExpressionUsedMarker, InverseSlaveOf, PropertyEventFunctionsGenerated, PropertyEvents, TopLevelDefineName,TypeOf,
+       // NewNameUsed, 
+       // CacheInlineFail, CacheInlineSuccess, ElementsCallInsideTemplateWith, IsArgDefineInWithTemplateCall, LocalRedefineGenname, LocalRedefineArgs, NonTrueTemplateACRules, UniqueNameTemplateCall,
+       // EntityNameToSearchableProps, IsSearchableProp,
+       // AddWebDSLRules,
+       // // rules added/altered/deleted during declare phase
+       // CheckNativeFunctionSignatureArgumentTypes, Functions, NativeFunctionDecl, TypeAnnotation, TypeHasBeenExtended,
+       // AccessControlEnabledMarker, IsReservedFunction, PrincipalDecl,
+       // AllProperties, AnalyzerInUse, CheckFunctionSignatureArgumentTypes, CheckFunctionSignatureArgumentTypesStatic, EntDecl, EntityFunctionDecl, EntityFunctionDeclStatic, EntityFunctionNoOverloading, EntityIdName, EntityIdType, FunctionDecl, Functions,
+       // FunctionSig, HasNameProperty, HasSyncConfig, IndexedEntity, InverseProperty, InverseRefOnly, IsCachedEntity, IsDerivedProperty, IsExtendedEntityFunction, IsSession, IsSessionEntityType, NameAnnotationProp, Properties, PropertyDecl, PropertyEvents,
+       // SearchFieldOverriddenEmbeddedDepth,SearchFieldOverriddenType, SearchFieldToPropName, SearchMappingForProp, SessionEntityNames, StaticSignatures, SubClass, SyncEnabled, TypeOf, TypeOfProperty, VarDecl,
+       // CheckGlobalFunctionSignatureArgumentTypes, ExtendGlobalFunctions, GlobalFunctionArgs, IsGlobal, IsGlobalFunction, IsGlobalFunctionSignature, IsRequestScopedVarDecl, TypeOf, VarDecl,
+       // CheckPageSignature, CompatibleWithBuiltInTemplate, DeriveUsed, ExactlyMatchesBuiltInTemplate, IsAttributeCollection, IsAttributeCollectionOverride, IsInlineSimpleTemplate, IsInlineTemplate, IsTemplatedDeprecated,
+       // PageDecl, PageDeclOverride, TemplateArguments, TemplateDefinition, TemplateDecl, TemplateGennameToSig, TemplateNewName, TemplateRequires, TemplateSignature, TopLevelTemplateDecl, TopLevelTemplateDeclOverride, TopLevelTemplateDefinitions,
+       // AnalyzerDefFromName, IsDualAnalyzer,
+       // CheckGlobalFunctionSignatureArgumentTypes, CheckNativeFunctionSignatureArgumentTypes, FunctionDecl, Functions, FunctionSig, GlobalFunctionArgs, IsGlobalFunction, IsGlobalFunctionSignature, IsProperty, NativeClassDecl, NativeFunctionDecl, 
+       // Properties, PropertyDecl, TypeOf, TypeOfProperty,
+       // DeriveUsed, CheckEmailSignature, EmailArguments, EmailDefinition, EnumDecl
+     //: 
+       innermost(with-toplevel-name(desugar))
+     //|}
   
   desugar-top = repeat(innermost-rep(desugar)) //why bother passing desugar, remove for readability?
 
